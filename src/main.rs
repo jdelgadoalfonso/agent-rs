@@ -4,6 +4,9 @@ extern crate amq_protocol;
 extern crate bitflags;
 extern crate chrono;
 extern crate config as ext_config;
+extern crate elastic;
+#[macro_use]
+extern crate elastic_derive;
 extern crate env_logger;
 extern crate futures;
 extern crate lapin_futures as lapin;
@@ -13,6 +16,10 @@ extern crate log;
 extern crate nom;
 extern crate ns_dns_tokio;
 extern crate rustls;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_json;
 extern crate tls_api;
 extern crate tls_api_rustls;
 extern crate tokio_core;
@@ -22,6 +29,7 @@ extern crate tokio_io;
 
 mod config;
 mod parser;
+mod push;
 
 
 use abstract_ns::HostResolve;
