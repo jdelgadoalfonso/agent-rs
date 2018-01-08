@@ -3,7 +3,9 @@ use elastic::prelude::{
     Date, DefaultDateMapping, EpochMillis, id, Index, SyncClientBuilder
 };
 
-use std::From;
+use parser::CHTHeader;
+
+use std::convert::From;
 
 
 #[derive(Serialize, Deserialize, ElasticType)]
@@ -17,8 +19,13 @@ pub struct MyType {
 }
 
 impl From<CHTHeader> for MyType {
-    from(f: CHTHeader) -> Self {
-
+    fn from(f: CHTHeader) -> Self {
+        // TODO: fill fields with CHTHeader info
+        MyType {
+            id: 0,
+            title: String::from("title"),
+            timestamp: Date::now(),
+        }
     }
 }
 
@@ -36,7 +43,8 @@ pub fn push(doc: &MyType) -> Result<(), Error> {
         client.index_create(sample_index()).send()?;
     }
 
-    // Add the document mapping (optional, but makes sure `timestamp` is mapped as a `date`)
+    // Add the document mapping (optional, but makes sure `timestamp`
+    // is mapped as a `date`)
     client.document_put_mapping::<MyType>(sample_index())
     .send()?;
 
