@@ -2,8 +2,10 @@ use ext_config::{Config, File};
 
 use rustls::ClientConfig;
 
-use std::{fs, env};
-use std::io::BufReader;
+use std::{
+    fs, env,
+    io::BufReader
+};
 
 
 #[derive(Clone)]

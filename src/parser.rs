@@ -2,6 +2,8 @@ use chrono::NaiveDateTime;
 
 use nom::{be_i8, be_u8, be_u16, be_u32, be_i64, IResult};
 
+use std::fmt;
+
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct CHTHeader {
@@ -13,7 +15,7 @@ pub struct CHTHeader {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct StatSta {
-    pub mac: Vec<u8>,        // Mac of the station
+    pub mac: Mac,            // Mac of the station
     pub snr: u8,             // SNR
     pub signal: i8,          // Signal power
     pub noise: i8,           // Noise power
@@ -36,16 +38,21 @@ pub struct StatSta {
     pub timestamp: NaiveDateTime, // Timestamp
 }
 
-/*
+#[derive(Debug, PartialEq, Eq)]
 pub struct Mac(Vec<u8>);
 
 impl fmt::UpperHex for Mac {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let val = self.0;
-        write!(f, "{:X}", val) // delegate to i32's implementation
+        write!(f, "{:X?}", self.0) // delegate to i32's implementation
     }
 }
-*/
+
+impl<'a> From<&'a [u8]> for Mac {
+    fn from(s: &'a [u8]) -> Self {
+        Mac(Vec::from(s))
+    }
+}
+
 
 bitflags! {
     pub struct WifiFlags: u8 {
@@ -108,7 +115,7 @@ fn stat_sta(input: &[u8]) -> IResult<&[u8], StatSta> {
     )
 }
 
-fn vec_stat_sta(input: &[u8], size: usize) -> IResult<&[u8], Vec<StatSta>> {
+fn vec_stat_sta(input: &[u8], _size: usize) -> IResult<&[u8], Vec<StatSta>> {
     do_parse!(input,
         num_stas: be_u8 >>
         stas: count!(stat_sta, num_stas as usize) >>

@@ -1,6 +1,8 @@
 #![feature(panic_info_message)]
 
 extern crate abstract_ns;
+extern crate actix;
+extern crate actix_web;
 extern crate amq_protocol;
 #[macro_use]
 extern crate bitflags;
@@ -32,98 +34,41 @@ extern crate tokio_io;
 mod config;
 mod parser;
 mod push;
+mod rabbit;
+mod service;
 
 
-use abstract_ns::HostResolve;
+use actix::{Arbiter, msgs};
+
+use actix_web::{server, App};
 
 use amq_protocol::uri::{AMQPQueryString, AMQPUserInfo};
 
 use config::{client_config_with_root_ca, config};
 
-use futures::{Stream, Future};
+use futures::{future, Future, Stream};
 
-use lapin::types::FieldTable;
-use lapin::client::ConnectionOptions;
-use lapin::channel::{
-    BasicConsumeOptions, ConfirmSelectOptions, QueueDeclareOptions
+use lapin::{
+    types::FieldTable,
+    channel::{
+        BasicConsumeOptions, ConfirmSelectOptions, QueueDeclareOptions
+    }
 };
 
 use nom::{HexDisplay, IResult};
 
-use ns_dns_tokio::DnsResolver;
-
 use parser::parser;
 
-use std::io;
-use std::str::FromStr;
+use rabbit::{connect_stream, open_tcp_stream};
+
+use service::index;
+
+use std::panic;
 
 use tls_api::TlsConnectorBuilder;
 
-use tokio_core::reactor::{Core, Handle};
-use tokio_core::net::TcpStream;
-
-use tokio_io::{AsyncRead, AsyncWrite};
-
-
-fn open_tcp_stream
-(handle: &Handle, host: &str, port: u16) ->
-Box<Future<Item = TcpStream, Error = io::Error> + 'static> {
-
-    let resolver = DnsResolver::system_config(handle)
-    .map_err(|_err| io::Error::new(
-        io::ErrorKind::Other, "Failed to initialize DnsResolver"
-    ));
-    let name = abstract_ns::name::Name::from_str(host)
-    .map_err(|err| io::Error::new(
-        io::ErrorKind::Other, err
-    ));
-    let handle2 = handle.clone();
-
-    Box::new(
-        futures::future::result(resolver)
-        .join(futures::future::result(name))
-        .and_then(move |(resolver, name)| {
-            resolver.resolve_host(&name).map_err(|err|
-                io::Error::new(io::ErrorKind::Other, err)
-            )
-        }).map(move |ip_list| {
-            ip_list.with_port(port)
-        }).and_then(move |address| {
-            address.pick_one().ok_or_else(|| io::Error::new(
-                io::ErrorKind::AddrNotAvailable, "Couldn't resolve hostname"
-            ))
-        }).and_then(move |sockaddr| {
-            TcpStream::connect(&sockaddr, &handle2)
-        })
-    )
-}
-
-fn connect_stream
-<T: AsyncRead + AsyncWrite + Send + Sync + 'static,
- F: FnOnce(io::Error) + 'static>
-(stream: T, handle: Handle, credentials: AMQPUserInfo,
- vhost: String, query: &AMQPQueryString, heartbeat_error_handler: F) ->
-Box<Future<Item = lapin::client::Client<T>, Error = io::Error> + 'static> {
-
-    let defaults = ConnectionOptions::default();
-    Box::new(lapin::client::Client::connect(stream, &ConnectionOptions {
-        username:  credentials.username,
-        password:  credentials.password,
-        vhost:     vhost,
-        frame_max: query.frame_max.unwrap_or_else(|| defaults.frame_max),
-        heartbeat: query.heartbeat.unwrap_or_else(|| defaults.heartbeat),
-    }).map(move |(client, heartbeat_future_fn)| {
-        let heartbeat_client = client.clone();
-        handle.spawn(heartbeat_future_fn(&heartbeat_client)
-        .map_err(heartbeat_error_handler));
-        client
-    }))
-}
 
 fn main() {
-    // create the reactor
-    let mut core = Core::new().unwrap();
-    let handle = core.handle();
     panic::set_hook(Box::new(|panic_info| {
         if let Some(message) = panic_info.message() {
             error!("panic: {}", message);
@@ -149,7 +94,7 @@ fn main() {
 
     drop(env_logger::init());
 
-    let fut = open_tcp_stream(&handle, &configuration.host, configuration.port)
+    let fut = open_tcp_stream(&configuration.host, configuration.port)
     .join({
         let tls_connector_builder = tls_api_rustls::TlsConnectorBuilder(
             client_config_with_root_ca(&configuration.cafile)
@@ -160,9 +105,7 @@ fn main() {
         tokio_tls_api::connect_async(&connector, &configuration.host, stream)
         .map_err(From::from).map(Box::new)
     }).and_then(move |stream| {
-        connect_stream(
-            stream, handle, userinfo, vhost, &query, |_| ()
-        )
+        connect_stream(stream, userinfo, vhost, &query, |_| ())
     }).and_then(|client| {
         client.create_confirm_channel(ConfirmSelectOptions::default())
     }).and_then(|channel| {
@@ -210,8 +153,19 @@ fn main() {
         })
     });
 
-    match core.run(fut) {
-        Ok(_) => info!("Ok"),
-        Err(e) => error!("{:?}", e),
-    }
+    server::new(| | App::new().resource("/", |r| r.h(index)))
+    .bind("0.0.0.0:8080").expect("Can not bind to 0.0.0.0:8080")
+    .start();
+
+    sys.handle().spawn(fut.then(|res| {
+        match res {
+            Ok(_) => info!("Ok"),
+            Err(e) => error!("{:?}", e),
+        }
+
+        let _ = Arbiter::system().send(msgs::SystemExit(0));
+        future::result(Ok(()))
+    }));
+
+    let _ = sys.run();
 }

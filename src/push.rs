@@ -1,6 +1,8 @@
-use elastic::Error;
-use elastic::prelude::{
-    Date, DefaultDateMapping, EpochMillis, id, Index, SyncClientBuilder
+use elastic::{
+    Error,
+    prelude::{
+        Date, DefaultDateMapping, EpochMillis, id, Index, SyncClientBuilder
+    }
 };
 
 use parser::CHTHeader;
@@ -19,7 +21,7 @@ pub struct MyType {
 }
 
 impl From<CHTHeader> for MyType {
-    fn from(f: CHTHeader) -> Self {
+    fn from(_f: CHTHeader) -> Self {
         // TODO: fill fields with CHTHeader info
         MyType {
             id: 0,
