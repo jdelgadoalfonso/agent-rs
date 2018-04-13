@@ -1,3 +1,5 @@
+#![feature(panic_info_message)]
+
 extern crate abstract_ns;
 extern crate amq_protocol;
 #[macro_use]
@@ -122,6 +124,18 @@ fn main() {
     // create the reactor
     let mut core = Core::new().unwrap();
     let handle = core.handle();
+    panic::set_hook(Box::new(|panic_info| {
+        if let Some(message) = panic_info.message() {
+            error!("panic: {}", message);
+        } else if let Some(payload) = panic_info.payload()
+                                      .downcast_ref::<&'static str>() {
+            error!("panic: {}", payload);
+        } else {
+            error!("panic");
+        }
+    }));
+
+    let sys = actix::System::new("guide");
     let configuration = config();
     let vhost = configuration.vhost.clone();
     let userinfo = AMQPUserInfo {
