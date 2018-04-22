@@ -8,6 +8,8 @@ extern crate amq_protocol;
 extern crate bitflags;
 extern crate chrono;
 extern crate config as ext_config;
+extern crate crossbeam_channel;
+extern crate crossbeam_utils;
 extern crate elastic;
 #[macro_use]
 extern crate elastic_derive;
@@ -39,41 +41,51 @@ mod service;
 
 
 use actix::{Arbiter, msgs};
-
 use actix_web::{server, App};
-
 use amq_protocol::uri::{AMQPQueryString, AMQPUserInfo};
-
 use config::{client_config_with_root_ca, config};
-
+use crossbeam_channel::unbounded;
 use futures::{future, Future, Stream};
-
 use lapin::{
     types::FieldTable,
     channel::{
         BasicConsumeOptions, ConfirmSelectOptions, QueueDeclareOptions
     }
 };
-
 use nom::{HexDisplay, IResult};
-
 use parser::parser;
-
 use rabbit::{connect_stream, open_tcp_stream};
-
 use service::index;
-
 use std::panic;
-
 use tls_api::TlsConnectorBuilder;
+
+
+fn pepe() {
+    let (tx, rx) = unbounded();
+
+    crossbeam_utils::scoped::scope(|s| {
+        // Spawn a thread that sends one message and then receives one.
+        s.spawn(|| {
+            tx.send(1).unwrap();
+            rx.recv().unwrap();
+        });
+
+        // Spawn another thread that does the same thing.
+        // Both closures capture `tx` and `rx` by reference.
+        s.spawn(|| {
+            tx.send(2).unwrap();
+            rx.recv().unwrap();
+        });
+    });
+}
 
 
 fn main() {
     panic::set_hook(Box::new(|panic_info| {
         if let Some(message) = panic_info.message() {
             error!("panic: {}", message);
-        } else if let Some(payload) = panic_info.payload()
-                                      .downcast_ref::<&'static str>() {
+        } else if let Some(payload) = panic_info
+        .payload().downcast_ref::<&'static str>() {
             error!("panic: {}", payload);
         } else {
             error!("panic");
