@@ -1,6 +1,5 @@
-#![feature(panic_info_message)]
+#![feature(panic_info_message, rust_2018_preview)]
 
-extern crate abstract_ns;
 extern crate actix;
 extern crate actix_web;
 extern crate amq_protocol;
@@ -10,6 +9,7 @@ extern crate chrono;
 extern crate config as ext_config;
 extern crate crossbeam_channel;
 extern crate crossbeam_utils;
+extern crate dirs;
 extern crate elastic;
 #[macro_use]
 extern crate elastic_derive;
@@ -20,7 +20,6 @@ extern crate lapin_futures as lapin;
 extern crate log;
 #[macro_use]
 extern crate nom;
-extern crate ns_dns_tokio;
 extern crate rustls;
 extern crate serde;
 #[macro_use]
@@ -28,9 +27,10 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate tls_api;
 extern crate tls_api_rustls;
-extern crate tokio_core;
-extern crate tokio_tls_api;
 extern crate tokio_io;
+extern crate tokio_tcp;
+extern crate tokio_tls_api;
+extern crate trust_dns_resolver;
 
 
 mod config;
@@ -40,7 +40,7 @@ mod rabbit;
 mod service;
 
 
-use actix::{Arbiter, msgs};
+use actix::Arbiter;
 use actix_web::{server, App};
 use amq_protocol::uri::{AMQPQueryString, AMQPUserInfo};
 use config::{client_config_with_root_ca, config};
@@ -52,7 +52,7 @@ use lapin::{
         BasicConsumeOptions, ConfirmSelectOptions, QueueDeclareOptions
     }
 };
-use nom::{HexDisplay, IResult};
+use nom::HexDisplay;
 use parser::parser;
 use rabbit::{connect_stream, open_tcp_stream};
 use service::index;
@@ -63,17 +63,17 @@ use tls_api::TlsConnectorBuilder;
 fn pepe() {
     let (tx, rx) = unbounded();
 
-    crossbeam_utils::scoped::scope(|s| {
+    crossbeam_utils::thread::scope(|s| {
         // Spawn a thread that sends one message and then receives one.
         s.spawn(|| {
-            tx.send(1).unwrap();
+            tx.send(1);
             rx.recv().unwrap();
         });
 
         // Spawn another thread that does the same thing.
         // Both closures capture `tx` and `rx` by reference.
         s.spawn(|| {
-            tx.send(2).unwrap();
+            tx.send(2);
             rx.recv().unwrap();
         });
     });
@@ -118,7 +118,7 @@ fn main() {
         .map_err(From::from).map(Box::new)
     }).and_then(move |stream| {
         connect_stream(stream, userinfo, vhost, &query, |_| ())
-    }).and_then(|client| {
+    }).and_then(|(client, _)| {
         client.create_confirm_channel(ConfirmSelectOptions::default())
     }).and_then(|channel| {
         let id = channel.id;
@@ -126,18 +126,16 @@ fn main() {
 
         let ch = channel.clone();
         channel.queue_declare(
-            "hello", &QueueDeclareOptions::default(), &FieldTable::new()
+            "hello", QueueDeclareOptions::default(), FieldTable::new()
         )
-        .and_then(move |_| {
+        .and_then(move |queue| {
             info!("channel {} declared queue {}", id, "hello");
 
             // basic_consume returns a future of a message
             // stream. Any time a message arrives for this consumer,
             // the for_each method would be called
-            channel.basic_consume(
-                "hello", "my_consumer", &BasicConsumeOptions::default(),
-                &FieldTable::new()
-            )
+            channel.basic_consume(&queue, "my_consumer",
+                BasicConsumeOptions::default(), FieldTable::new())
         })
         .and_then(|stream| {
             info!("got consumer stream");
@@ -148,7 +146,7 @@ fn main() {
                 let header = parser(&message.data[..]);
 
                 match header {
-                    IResult::Done(i, o) => {
+                    Ok((i, o)) => {
                         info!("parsed: {:?}\n", o);
                         if i.len() > 0 {
                             info!("remaining:\n{}", &i[..].to_hex(16));
@@ -159,7 +157,7 @@ fn main() {
                         error!("cannot parse header");
                     }
                 }
-                ch.basic_ack(message.delivery_tag);
+                ch.basic_ack(message.delivery_tag, false);
                 Ok(())
             })
         })
@@ -169,13 +167,13 @@ fn main() {
     .bind("0.0.0.0:8080").expect("Can not bind to 0.0.0.0:8080")
     .start();
 
-    sys.handle().spawn(fut.then(|res| {
+    Arbiter::spawn(fut.then(|res| {
         match res {
             Ok(_) => info!("Ok"),
             Err(e) => error!("{:?}", e),
         }
 
-        let _ = Arbiter::system().send(msgs::SystemExit(0));
+        actix::System::current().stop();
         future::result(Ok(()))
     }));
 

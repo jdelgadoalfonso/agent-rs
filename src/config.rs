@@ -1,11 +1,10 @@
+use dirs;
+
 use ext_config::{Config, File};
 
 use rustls::ClientConfig;
 
-use std::{
-    fs, env,
-    io::BufReader
-};
+use std::{fs, io::BufReader};
 
 
 #[derive(Clone)]
@@ -19,7 +18,7 @@ pub struct Configuration {
 }
 
 pub fn config() -> Configuration {
-    let mut home = env::home_dir().unwrap();
+    let mut home = dirs::home_dir().unwrap();
     home.push(".agent-rs");
 
     let mut settings = Config::default();
