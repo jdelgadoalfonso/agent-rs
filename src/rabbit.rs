@@ -1,26 +1,15 @@
-extern crate lapin_futures as lapin;
-
 use actix::Arbiter;
-
 use amq_protocol::uri::{AMQPQueryString, AMQPUserInfo};
-
 use futures::Future;
-
-use lapin::client::ConnectionOptions;
-
-use std::{
-    io, net::SocketAddr
-};
-
+use lapin_futures::client::{Client, HeartbeatHandle, ConnectionOptions};
+use std::{io, net::SocketAddr};
 use tokio_io::{AsyncRead, AsyncWrite};
-
 use tokio_tcp::TcpStream;
-
 use trust_dns_resolver::ResolverFuture;
 
 
 pub fn open_tcp_stream(host: &str, port: u16) ->
-Box<Future<Item = TcpStream, Error = io::Error> + 'static>
+Box<dyn Future<Item = TcpStream, Error = io::Error> + 'static>
 {
     let host = String::from(host);
     Box::new(
@@ -47,12 +36,12 @@ pub fn connect_stream
 F: FnOnce(io::Error) + Send + 'static>
 (stream: T, credentials: AMQPUserInfo, vhost: String,
 query: &AMQPQueryString, heartbeat_error_handler: F) ->
-Box<Future<Item = (lapin::client::Client<T>, Option<lapin::client::HeartbeatHandle>),
+Box<dyn Future<Item = (Client<T>, Option<HeartbeatHandle>),
 Error = io::Error> + Send + 'static>
 {
     let defaults = ConnectionOptions::default();
 
-    Box::new(lapin::client::Client::connect(stream, ConnectionOptions {
+    Box::new(Client::connect(stream, ConnectionOptions {
         username:  credentials.username,
         password:  credentials.password,
         vhost:     vhost,

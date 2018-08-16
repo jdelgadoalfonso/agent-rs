@@ -1,6 +1,6 @@
 use dirs;
 
-use ext_config::{Config, File};
+use config::{Config, File};
 
 use rustls::ClientConfig;
 

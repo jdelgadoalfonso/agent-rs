@@ -1,82 +1,64 @@
 #![feature(panic_info_message, rust_2018_preview)]
 
-extern crate actix;
-extern crate actix_web;
-extern crate amq_protocol;
 #[macro_use]
 extern crate bitflags;
-extern crate chrono;
-extern crate config as ext_config;
-extern crate crossbeam_channel;
-extern crate crossbeam_utils;
-extern crate dirs;
-extern crate elastic;
 #[macro_use]
-extern crate elastic_derive;
-extern crate env_logger;
-extern crate futures;
-extern crate lapin_futures as lapin;
+extern crate influx_db_client;
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate nom;
-extern crate rustls;
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-extern crate tls_api;
-extern crate tls_api_rustls;
-extern crate tokio_io;
-extern crate tokio_tcp;
-extern crate tokio_tls_api;
-extern crate trust_dns_resolver;
-
 
 mod config;
 mod parser;
-mod push;
+mod tsdb {
+    pub mod push;
+}
 mod rabbit;
 mod service;
 
+use crate::config::{client_config_with_root_ca, config};
+use crate::parser::{CHTHeader, parser};
+use crate::tsdb::push::push;
+use crate::rabbit::{connect_stream, open_tcp_stream};
+use crate::service::index;
 
-use actix::Arbiter;
+use actix::{Actor, Arbiter, Context, Handler, Message};
 use actix_web::{server, App};
 use amq_protocol::uri::{AMQPQueryString, AMQPUserInfo};
-use config::{client_config_with_root_ca, config};
-use crossbeam_channel::unbounded;
-use futures::{future, Future, Stream};
-use lapin::{
+use futures::{future, Future, stream::Stream};
+use lapin_futures::{
     types::FieldTable,
     channel::{
         BasicConsumeOptions, ConfirmSelectOptions, QueueDeclareOptions
     }
 };
 use nom::HexDisplay;
-use parser::parser;
-use rabbit::{connect_stream, open_tcp_stream};
-use service::index;
 use std::panic;
 use tls_api::TlsConnectorBuilder;
 
 
-fn pepe() {
-    let (tx, rx) = unbounded();
+impl Message for CHTHeader {
+    type Result = ();
+}
 
-    crossbeam_utils::thread::scope(|s| {
-        // Spawn a thread that sends one message and then receives one.
-        s.spawn(|| {
-            tx.send(1);
-            rx.recv().unwrap();
-        });
+// Actor definition
+struct Summator;
 
-        // Spawn another thread that does the same thing.
-        // Both closures capture `tx` and `rx` by reference.
-        s.spawn(|| {
-            tx.send(2);
-            rx.recv().unwrap();
-        });
-    });
+impl Actor for Summator {
+    type Context = Context<Self>;
+}
+
+// now we need to define `MessageHandler` for the `Sum` message.
+impl Handler<CHTHeader> for Summator {
+    type Result = (); // <- Message response type
+
+    fn handle(&mut self, msg: CHTHeader, _ctx: &mut Context<Self>) {
+        if let Some(ls) = msg.data {
+            for s in ls {
+                info!("Storing StatSta {:?}\n", s);
+                push(s);
+            }
+        }
+    }
 }
 
 
@@ -92,6 +74,8 @@ fn main() {
         }
     }));
 
+    drop(env_logger::init());
+
     let sys = actix::System::new("guide");
     let configuration = config();
     let vhost = configuration.vhost.clone();
@@ -101,10 +85,8 @@ fn main() {
     };
     let query = AMQPQueryString {
         frame_max: None,
-        heartbeat: None,
+        heartbeat: Some(20),
     };
-
-    drop(env_logger::init());
 
     let fut = open_tcp_stream(&configuration.host, configuration.port)
     .join({
@@ -121,45 +103,38 @@ fn main() {
     }).and_then(|(client, _)| {
         client.create_confirm_channel(ConfirmSelectOptions::default())
     }).and_then(|channel| {
-        let id = channel.id;
-        info!("created channel with id: {}", id);
-
-        let ch = channel.clone();
+        info!("created channel with id: {}", channel.id);
         channel.queue_declare(
             "hello", QueueDeclareOptions::default(), FieldTable::new()
-        )
-        .and_then(move |queue| {
-            info!("channel {} declared queue {}", id, "hello");
+        ).map(move |queue| (channel, queue))
+    }).and_then(move |(channel, queue)| {
+        info!("channel {} declared queue {}", channel.id, "hello");
+        channel.basic_consume(&queue, "my_consumer",
+            BasicConsumeOptions::default(), FieldTable::new()
+        ).map(move |stream| (channel, stream))
+    }).and_then(move |(channel, stream)| {
+        info!("got consumer stream");
+        let addr = Arbiter::start(move |_| Summator);
 
-            // basic_consume returns a future of a message
-            // stream. Any time a message arrives for this consumer,
-            // the for_each method would be called
-            channel.basic_consume(&queue, "my_consumer",
-                BasicConsumeOptions::default(), FieldTable::new())
-        })
-        .and_then(|stream| {
-            info!("got consumer stream");
+        stream.for_each(move |message| {
+            debug!("got message: {:?}", message);
+            info!("raw message:\n{}", &*message.data.to_hex(16));
+            let header = parser(&message.data[..]);
 
-            stream.for_each(move |message| {
-                debug!("got message: {:?}", message);
-                info!("raw message:\n{}", &*message.data.to_hex(16));
-                let header = parser(&message.data[..]);
-
-                match header {
-                    Ok((i, o)) => {
-                        info!("parsed: {:?}\n", o);
-                        if i.len() > 0 {
-                            info!("remaining:\n{}", &i[..].to_hex(16));
-                        }
-                    },
-                    _  => {
-                        error!("error or incomplete");
-                        error!("cannot parse header");
+            match header {
+                Ok((i, o)) => {
+                    if i.len() > 0 {
+                        info!("remaining:\n{}", &i[..].to_hex(16));
                     }
+                    let res = addr.send(o);
+                    Arbiter::spawn(res.then(|_| future::result(Ok(()))));
+                },
+                _  => {
+                    error!("error or incomplete");
+                    error!("cannot parse header");
                 }
-                ch.basic_ack(message.delivery_tag, false);
-                Ok(())
-            })
+            }
+            channel.basic_ack(message.delivery_tag, false)
         })
     });
 

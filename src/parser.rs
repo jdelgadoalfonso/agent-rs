@@ -1,9 +1,12 @@
+use crate::tsdb::push::Influx;
 use chrono::NaiveDateTime;
-
-use nom::{be_i8, be_u8, be_u16, be_u32, be_i64, IResult};
-
+use influx_db_client::{Point, Value};
+use influxdb_derive::InfluxDB;
+use nom::{
+    be_i8, be_u8, be_u16, be_u32, be_i64, call,
+    cond, count, do_parse, error_position, take, IResult
+};
 use std::fmt;
-
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct CHTHeader {
@@ -13,7 +16,7 @@ pub struct CHTHeader {
     pub data: Option<Vec<StatSta>>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, InfluxDB)]
 pub struct StatSta {
     pub mac: Mac,            // Mac of the station
     pub snr: u8,             // SNR
@@ -23,11 +26,13 @@ pub struct StatSta {
     pub tx_packets: u32,     // Transmitted packets
     pub tx_rate: u32,        // TX rate
     pub tx_mcs: i8,          // TX MCS
+    #[influx(datatype = "Integer")]
     pub tx_flags: WifiFlags, // [x,x,x,x,is_vht,is_ht,is_short_gi,is40mhz]
     pub tx_mhz: u8,          // TX Bandwidth
     pub tx_vht_nss: u8,      // TX VHT NSS
     pub rx_rate: u32,        // RX rate
     pub rx_mcs: i8,          // RX MCS
+    #[influx(datatype = "Integer")]
     pub rx_flags: WifiFlags, // [x,x,x,x,is_vht,is_ht,is_short_gi,is40mhz]
     pub rx_mhz: u8,          // RX Bandwidth
     pub rx_vht_nss: u8,      // RX VHT NSS
@@ -35,6 +40,7 @@ pub struct StatSta {
     pub tx_bytes: u32,       // Transmitted bytes
     pub rx_retries: u32,     // TX bytes retries
     pub rx_failed: u32,      // TX bytes failed
+    #[influx(skip)]
     pub timestamp: NaiveDateTime, // Timestamp
 }
 
@@ -42,7 +48,7 @@ pub struct StatSta {
 pub struct Mac(Vec<u8>);
 
 impl fmt::UpperHex for Mac {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:X?}", self.0) // delegate to i32's implementation
     }
 }
@@ -53,6 +59,12 @@ impl<'a> From<&'a [u8]> for Mac {
     }
 }
 
+impl fmt::Display for Mac {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:X?}", self.0)
+    }
+}
+
 
 bitflags! {
     pub struct WifiFlags: u8 {
@@ -60,6 +72,18 @@ bitflags! {
         const IS_SHORT_GI = 0b00000010;
         const IS_HT = 0b00000100;
         const IS_VHT = 0b00001000;
+    }
+}
+
+impl fmt::Display for WifiFlags {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl WifiFlags {
+    pub fn to_integer(&self) -> i64 {
+        self.bits() as i64
     }
 }
 
