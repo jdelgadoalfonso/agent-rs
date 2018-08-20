@@ -1,4 +1,4 @@
-#![feature(panic_info_message, rust_2018_preview)]
+#![feature(panic_info_message)]
 
 #[macro_use]
 extern crate bitflags;
@@ -21,8 +21,8 @@ use crate::tsdb::push::push;
 use crate::rabbit::{connect_stream, open_tcp_stream};
 use crate::service::index;
 
-use actix::{Actor, Arbiter, Context, Handler, Message};
-use actix_web::{server, App};
+use actix::{Actor, Arbiter, SyncContext, Handler, Message, SyncArbiter};
+use actix_web::{http, server, App, middleware::cors::Cors};
 use amq_protocol::uri::{AMQPQueryString, AMQPUserInfo};
 use futures::{future, Future, stream::Stream};
 use lapin_futures::{
@@ -32,6 +32,7 @@ use lapin_futures::{
     }
 };
 use nom::HexDisplay;
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use std::panic;
 use tls_api::TlsConnectorBuilder;
 
@@ -44,14 +45,15 @@ impl Message for CHTHeader {
 struct Summator;
 
 impl Actor for Summator {
-    type Context = Context<Self>;
+    type Context = SyncContext<Self>;
 }
 
 // now we need to define `MessageHandler` for the `Sum` message.
 impl Handler<CHTHeader> for Summator {
     type Result = (); // <- Message response type
 
-    fn handle(&mut self, msg: CHTHeader, _ctx: &mut Context<Self>) {
+    fn handle(&mut self, msg: CHTHeader, _ctx: &mut Self::Context) {
+        info!("Handling message...");
         if let Some(ls) = msg.data {
             for s in ls {
                 info!("Storing StatSta {:?}\n", s);
@@ -114,7 +116,7 @@ fn main() {
         ).map(move |stream| (channel, stream))
     }).and_then(move |(channel, stream)| {
         info!("got consumer stream");
-        let addr = Arbiter::start(move |_| Summator);
+        let addr = SyncArbiter::start(2, || Summator);
 
         stream.for_each(move |message| {
             debug!("got message: {:?}", message);
@@ -126,8 +128,9 @@ fn main() {
                     if i.len() > 0 {
                         info!("remaining:\n{}", &i[..].to_hex(16));
                     }
-                    let res = addr.send(o);
-                    Arbiter::spawn(res.then(|_| future::result(Ok(()))));
+                    info!("Sending message to SyncActor");
+                    addr.do_send(o);
+                    //Arbiter::spawn(res.then(|_| future::result(Ok(()))));
                 },
                 _  => {
                     error!("error or incomplete");
@@ -138,8 +141,24 @@ fn main() {
         })
     });
 
-    server::new(| | App::new().resource("/", |r| r.h(index)))
-    .bind("0.0.0.0:8080").expect("Can not bind to 0.0.0.0:8080")
+    // load ssl keys
+    let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+    builder.set_private_key_file("resources/key.pem", SslFiletype::PEM).unwrap();
+    builder.set_certificate_chain_file("resources/cert.pem").unwrap();
+
+    server::new(move || App::new().configure(|app| {
+        Cors::for_app(app) // <- Construct CORS middleware builder
+        .allowed_origin("http://localhost:4200")
+        .allowed_methods(vec!["GET", "POST"])
+        .allowed_headers(vec![http::header::AUTHORIZATION, http::header::ACCEPT])
+        .allowed_header(http::header::CONTENT_TYPE)
+        .max_age(3600)
+        .resource("/", |r| r.h(index))
+        .register()
+    }))
+    .workers(2)
+    .bind_ssl("0.0.0.0:8443", builder)
+    .expect("Can not bind to 0.0.0.0:8443")
     .start();
 
     Arbiter::spawn(fut.then(|res| {

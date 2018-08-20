@@ -27,11 +27,12 @@ env_logger = "0.5.12"
 futures = "0.1.23"
 influx_db_client = "0.3.4"
 lapin-futures = "0.13.0"
-log = "0.4.3"
+log = "0.4.4"
 nom = "4.0.0"
-proc-macro2 = { version = "0.4.12", features = ["nightly"] }
+openssl = { version = "0.10.11", features = ["v110"] }
+proc-macro2 = { version = "0.4.13", features = ["nightly"] }
 quote = "0.6.6"
-rustls = "0.13.0"
+rustls = "0.13.1"
 syn = { version = "0.14.8", features = ["full"] }
 tls-api = { git = "https://github.com/jdelgadoalfonso/rust-tls-api.git", branch = "v0.1" }
 tls-api-rustls = { git = "https://github.com/jdelgadoalfonso/rust-tls-api.git", branch = "v0.1" }

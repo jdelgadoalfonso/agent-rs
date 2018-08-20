@@ -44,12 +44,14 @@ pub struct StatSta {
     pub timestamp: NaiveDateTime, // Timestamp
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct Mac(Vec<u8>);
 
-impl fmt::UpperHex for Mac {
+impl fmt::Debug for Mac {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:X?}", self.0) // delegate to i32's implementation
+        write!(f, "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            self.0[0], self.0[1], self.0[2],
+            self.0[3], self.0[4], self.0[5]) // delegate to i32's implementation
     }
 }
 
@@ -61,7 +63,9 @@ impl<'a> From<&'a [u8]> for Mac {
 
 impl fmt::Display for Mac {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:X?}", self.0)
+        write!(f, "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            self.0[0], self.0[1], self.0[2],
+            self.0[3], self.0[4], self.0[5]) // delegate to i32's implementation
     }
 }
 
