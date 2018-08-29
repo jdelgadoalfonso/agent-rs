@@ -76,7 +76,7 @@ fn make_push_fn(
     }).collect();
     my_quote! {
         impl #impl_generics Influx for #name #ty_generics #where_clause {
-            fn push(self) -> Point {
+            fn push(&self) -> Point {
                 let mut point = point!(stringify!(#name));
                 #(#fields)*
                 point

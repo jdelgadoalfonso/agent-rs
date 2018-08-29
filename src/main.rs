@@ -32,7 +32,10 @@ use lapin_futures::{
     }
 };
 use nom::HexDisplay;
-use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+use rustls::{
+    NoClientAuth, ServerConfig,
+    internal::pemfile::{certs, rsa_private_keys}
+};
 use std::panic;
 use tls_api::TlsConnectorBuilder;
 
@@ -54,17 +57,16 @@ impl Handler<CHTHeader> for Summator {
 
     fn handle(&mut self, msg: CHTHeader, _ctx: &mut Self::Context) {
         info!("Handling message...");
-        if let Some(ls) = msg.data {
+        if let Some(ls) = &msg.data {
             for s in ls {
                 info!("Storing StatSta {:?}\n", s);
-                push(s);
+                push(&msg, &s);
             }
         }
     }
 }
 
-
-fn main() {
+fn set_panic_hook() {
     panic::set_hook(Box::new(|panic_info| {
         if let Some(message) = panic_info.message() {
             error!("panic: {}", message);
@@ -75,10 +77,30 @@ fn main() {
             error!("panic");
         }
     }));
+}
 
+fn load_ssl() -> ServerConfig {
+    use std::io::BufReader;
+
+    const CERT: &'static [u8] = include_bytes!("../resources/cert.pem");
+    const KEY: &'static [u8] = include_bytes!("../resources/key.pem");
+
+    let mut cert = BufReader::new(CERT);
+    let mut key = BufReader::new(KEY);
+
+    let mut config = ServerConfig::new(NoClientAuth::new());
+    let cert_chain = certs(&mut cert).unwrap();
+    let mut keys = rsa_private_keys(&mut key).unwrap();
+    config.set_single_cert(cert_chain, keys.remove(0)).unwrap();
+
+    config
+}
+
+fn main() {
+    set_panic_hook();
     drop(env_logger::init());
 
-    let sys = actix::System::new("guide");
+    let sys = actix::System::new("agent-rs");
     let configuration = config();
     let vhost = configuration.vhost.clone();
     let userinfo = AMQPUserInfo {
@@ -142,9 +164,8 @@ fn main() {
     });
 
     // load ssl keys
-    let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
-    builder.set_private_key_file("resources/key.pem", SslFiletype::PEM).unwrap();
-    builder.set_certificate_chain_file("resources/cert.pem").unwrap();
+    let config = load_ssl();
+    let acceptor = server::RustlsAcceptor::new(config);
 
     server::new(move || App::new().configure(|app| {
         Cors::for_app(app) // <- Construct CORS middleware builder
@@ -157,7 +178,7 @@ fn main() {
         .register()
     }))
     .workers(2)
-    .bind_ssl("0.0.0.0:8443", builder)
+    .bind_with("0.0.0.0:8443", acceptor)
     .expect("Can not bind to 0.0.0.0:8443")
     .start();
 

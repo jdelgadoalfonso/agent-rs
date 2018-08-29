@@ -16,27 +16,26 @@ name = "agent-rs"
 path = "src/main.rs"
 
 [dependencies]
-actix = "0.7.3"
-actix-web = { version = "0.7.3", features=["alpn"] }
+actix = "0.7.4"
+actix-web = { version = "0.7.4", features=["rust-tls"] }
 amq-protocol = "0.22.0"
-bitflags = "1.0.3"
-chrono = "0.4.5"
+bitflags = "1.0.4"
+chrono = "0.4.6"
 config = "0.9.0"
 dirs = "1.0.3"
-env_logger = "0.5.12"
+env_logger = "0.5.13"
 futures = "0.1.23"
 influx_db_client = "0.3.4"
 lapin-futures = "0.13.0"
 log = "0.4.4"
 nom = "4.0.0"
-openssl = { version = "0.10.11", features = ["v110"] }
-proc-macro2 = { version = "0.4.13", features = ["nightly"] }
-quote = "0.6.6"
+proc-macro2 = { version = "0.4.15", features = ["nightly"] }
+quote = "0.6.8"
 rustls = "0.13.1"
-syn = { version = "0.14.8", features = ["full"] }
+syn = { version = "0.14.9", features = ["full"] }
 tls-api = { git = "https://github.com/jdelgadoalfonso/rust-tls-api.git", branch = "v0.1" }
 tls-api-rustls = { git = "https://github.com/jdelgadoalfonso/rust-tls-api.git", branch = "v0.1" }
-tokio-io = "0.1.7"
+tokio-io = "0.1.8"
 tokio-tcp = "0.1.1"
 tokio-tls-api = { git = "https://github.com/jdelgadoalfonso/rust-tls-api.git", branch = "v0.1" }
 trust-dns-resolver = "0.9.1"
