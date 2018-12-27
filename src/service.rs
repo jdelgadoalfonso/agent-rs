@@ -1,6 +1,5 @@
-use actix_web::{HttpRequest, Json, Result, error::ErrorInternalServerError};
+use actix_web::{error::ErrorInternalServerError, HttpRequest, Json, Result};
 use influx_db_client::{Client, Series};
-
 
 pub fn index(_req: &HttpRequest) -> Result<Json<Option<Vec<Series>>>> {
     let mut client = Client::default().set_authentication("root", "root");
@@ -11,8 +10,8 @@ pub fn index(_req: &HttpRequest) -> Result<Json<Option<Vec<Series>>>> {
                 let node = n[0].clone();
                 return Ok(Json(node.series));
             }
-            return Ok(Json(None))
-        },
-        Err(e) => Err(ErrorInternalServerError(e))
+            return Ok(Json(None));
+        }
+        Err(e) => Err(ErrorInternalServerError(e)),
     }
 }

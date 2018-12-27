@@ -1,5 +1,6 @@
 #![crate_type = "proc-macro"]
 
+extern crate proc_macro;
 #[macro_use]
 extern crate quote;
 #[macro_use]
@@ -8,30 +9,21 @@ extern crate syn;
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use syn::{
+    punctuated::Punctuated,
     DeriveInput, Field, Fields,
+    Meta::{List, NameValue, Word},
     NestedMeta::Meta,
-    Meta::{
-        List,
-        NameValue,
-        Word
-    },
-    punctuated::Punctuated
 };
-
 
 macro_rules! my_quote {
     ($($t:tt)*) => (quote_spanned!(Span::call_site() => $($t)*))
 }
 
-fn make_push_fn(
-    ast: &DeriveInput,
-    fields: Option<&Punctuated<Field, Token![,]>>
-) -> TokenStream2
-{
+fn make_push_fn(ast: &DeriveInput, fields: Option<&Punctuated<Field, Token![,]>>) -> TokenStream2 {
     let name = &ast.ident;
     let (impl_generics, ty_generics, where_clause) = ast.generics.split_for_impl();
     let empty = Default::default();
-    let fields: Vec<_> = fields.unwrap_or(&empty).iter().enumerate()    
+    let fields: Vec<_> = fields.unwrap_or(&empty).iter().enumerate()
     .map(|(_i, f)| {
         let ident = &f.ident;
         let ty = &f.ty;
@@ -85,18 +77,11 @@ fn make_push_fn(
     }
 }
 
-fn for_struct(ast: &DeriveInput, fields: &Fields) -> TokenStream2
-{
+fn for_struct(ast: &DeriveInput, fields: &Fields) -> TokenStream2 {
     match *fields {
-        syn::Fields::Named(ref fields) => {
-            make_push_fn(&ast, Some(&fields.named))
-        },
-        syn::Fields::Unit => {
-            make_push_fn(&ast, None)
-        },
-        syn::Fields::Unnamed(ref fields) => {
-            make_push_fn(&ast, Some(&fields.unnamed))
-        },
+        syn::Fields::Named(ref fields) => make_push_fn(&ast, Some(&fields.named)),
+        syn::Fields::Unit => make_push_fn(&ast, None),
+        syn::Fields::Unnamed(ref fields) => make_push_fn(&ast, Some(&fields.unnamed)),
     }
 }
 

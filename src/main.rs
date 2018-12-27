@@ -16,29 +16,27 @@ mod rabbit;
 mod service;
 
 use crate::config::{client_config_with_root_ca, config};
-use crate::parser::{CHTHeader, parser};
-use crate::tsdb::push::push;
+use crate::parser::{parser, CHTHeader};
 use crate::rabbit::{connect_stream, open_tcp_stream};
 use crate::service::index;
+use crate::tsdb::push::push;
 
-use actix::{Actor, Arbiter, SyncContext, Handler, Message, SyncArbiter};
-use actix_web::{http, server, App, middleware::cors::Cors};
+use actix::{Actor, Handler, Message, SyncArbiter, SyncContext};
+use actix_web::{http, middleware::cors::Cors, server, App};
 use amq_protocol::uri::{AMQPQueryString, AMQPUserInfo};
-use futures::{future, Future, stream::Stream};
+use failure::Error;
+use futures::{future, stream::Stream, Future};
 use lapin_futures::{
+    channel::{BasicConsumeOptions, ConfirmSelectOptions, QueueDeclareOptions},
     types::FieldTable,
-    channel::{
-        BasicConsumeOptions, ConfirmSelectOptions, QueueDeclareOptions
-    }
 };
 use nom::HexDisplay;
 use rustls::{
+    internal::pemfile::{certs, rsa_private_keys},
     NoClientAuth, ServerConfig,
-    internal::pemfile::{certs, rsa_private_keys}
 };
 use std::panic;
 use tls_api::TlsConnectorBuilder;
-
 
 impl Message for CHTHeader {
     type Result = ();
@@ -70,8 +68,7 @@ fn set_panic_hook() {
     panic::set_hook(Box::new(|panic_info| {
         if let Some(message) = panic_info.message() {
             error!("panic: {}", message);
-        } else if let Some(payload) = panic_info
-        .payload().downcast_ref::<&'static str>() {
+        } else if let Some(payload) = panic_info.payload().downcast_ref::<&'static str>() {
             error!("panic: {}", payload);
         } else {
             error!("panic");
@@ -113,81 +110,104 @@ fn main() {
     };
 
     let fut = open_tcp_stream(&configuration.host, configuration.port)
-    .join({
-        let tls_connector_builder = tls_api_rustls::TlsConnectorBuilder(
-            client_config_with_root_ca(&configuration.cafile)
-        );
-        let tls_connector = tls_connector_builder.build().map_err(From::from);
-        futures::future::result(tls_connector)
-    }).and_then(move |(stream, connector)| {
-        tokio_tls_api::connect_async(&connector, &configuration.host, stream)
-        .map_err(From::from).map(Box::new)
-    }).and_then(move |stream| {
-        connect_stream(stream, userinfo, vhost, &query, |_| ())
-    }).and_then(|(client, _)| {
-        client.create_confirm_channel(ConfirmSelectOptions::default())
-    }).and_then(|channel| {
-        info!("created channel with id: {}", channel.id);
-        channel.queue_declare(
-            "hello", QueueDeclareOptions::default(), FieldTable::new()
-        ).map(move |queue| (channel, queue))
-    }).and_then(move |(channel, queue)| {
-        info!("channel {} declared queue {}", channel.id, "hello");
-        channel.basic_consume(&queue, "my_consumer",
-            BasicConsumeOptions::default(), FieldTable::new()
-        ).map(move |stream| (channel, stream))
-    }).and_then(move |(channel, stream)| {
-        info!("got consumer stream");
-        let addr = SyncArbiter::start(2, || Summator);
-
-        stream.for_each(move |message| {
-            debug!("got message: {:?}", message);
-            info!("raw message:\n{}", &*message.data.to_hex(16));
-            let header = parser(&message.data[..]);
-
-            match header {
-                Ok((i, o)) => {
-                    if i.len() > 0 {
-                        info!("remaining:\n{}", &i[..].to_hex(16));
-                    }
-                    info!("Sending message to SyncActor");
-                    addr.do_send(o);
-                    //Arbiter::spawn(res.then(|_| future::result(Ok(()))));
-                },
-                _  => {
-                    error!("error or incomplete");
-                    error!("cannot parse header");
-                }
-            }
-            channel.basic_ack(message.delivery_tag, false)
+        .join({
+            let tls_connector_builder = tls_api_rustls::TlsConnectorBuilder(
+                client_config_with_root_ca(&configuration.cafile),
+            );
+            let tls_connector = tls_connector_builder.build().map_err(Error::from);
+            futures::future::result(tls_connector)
         })
-    });
+        .and_then(move |(stream, connector)| {
+            tokio_tls_api::connect_async(&connector, &configuration.host, stream)
+                .map_err(Error::from)
+                .map(Box::new)
+        })
+        .and_then(move |stream| {
+            connect_stream(stream, userinfo, vhost, &query, |_| ()).map_err(Error::from)
+        })
+        .and_then(|(client, _)| {
+            client
+                .create_confirm_channel(ConfirmSelectOptions::default())
+                .map_err(Error::from)
+        })
+        .and_then(|channel| {
+            info!("created channel with id: {}", channel.id);
+            channel
+                .queue_declare("hello", QueueDeclareOptions::default(), FieldTable::new())
+                .map_err(Error::from)
+                .map(move |queue| (channel, queue))
+        })
+        .and_then(move |(channel, queue)| {
+            info!("channel {} declared queue {}", channel.id, "hello");
+            channel
+                .basic_consume(
+                    &queue,
+                    "my_consumer",
+                    BasicConsumeOptions::default(),
+                    FieldTable::new(),
+                )
+                .map_err(Error::from)
+                .map(move |stream| (channel, stream))
+        })
+        .and_then(move |(channel, stream)| {
+            info!("got consumer stream");
+            let addr = SyncArbiter::start(2, || Summator);
+
+            stream
+                .for_each(move |message| {
+                    debug!("got message: {:?}", message);
+                    info!("raw message:\n{}", &*message.data.to_hex(16));
+                    let header = parser(&message.data[..]);
+
+                    match header {
+                        Ok((i, o)) => {
+                            if i.len() > 0 {
+                                info!("remaining:\n{}", &i[..].to_hex(16));
+                            }
+                            info!("Sending message to SyncActor");
+                            addr.do_send(o);
+                            //Arbiter::spawn(res.then(|_| future::result(Ok(()))));
+                        }
+                        _ => {
+                            error!("error or incomplete");
+                            error!("cannot parse header");
+                        }
+                    }
+                    channel.basic_ack(message.delivery_tag, false)
+                })
+                .map_err(Error::from)
+        });
 
     // load ssl keys
     let config = load_ssl();
-    let acceptor = server::RustlsAcceptor::new(config);
 
-    server::new(move || App::new().configure(|app| {
-        Cors::for_app(app) // <- Construct CORS middleware builder
-        .allowed_origin("http://localhost:4200")
-        .allowed_methods(vec!["GET", "POST"])
-        .allowed_headers(vec![http::header::AUTHORIZATION, http::header::ACCEPT])
-        .allowed_header(http::header::CONTENT_TYPE)
-        .max_age(3600)
-        .resource("/", |r| r.h(index))
-        .register()
-    }))
+    server::new(move || {
+        App::new().configure(|app| {
+            Cors::for_app(app) // <- Construct CORS middleware builder
+                .allowed_origin("http://localhost:4200")
+                .allowed_methods(vec!["GET", "POST"])
+                .allowed_headers(vec![http::header::AUTHORIZATION, http::header::ACCEPT])
+                .allowed_header(http::header::CONTENT_TYPE)
+                .max_age(3600)
+                .resource("/", |r| r.h(index))
+                .register()
+        })
+    })
     .workers(2)
-    .bind_with("0.0.0.0:8443", acceptor)
+    .bind_with("0.0.0.0:8443", move || {
+        server::RustlsAcceptor::with_flags(
+            config.clone(),
+            server::ServerFlags::HTTP1 | server::ServerFlags::HTTP2,
+        )
+    })
     .expect("Can not bind to 0.0.0.0:8443")
     .start();
 
-    Arbiter::spawn(fut.then(|res| {
+    actix::spawn(fut.then(|res| {
         match res {
             Ok(_) => info!("Ok"),
             Err(e) => error!("{:?}", e),
         }
-
         actix::System::current().stop();
         future::result(Ok(()))
     }));

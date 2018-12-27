@@ -1,11 +1,7 @@
-use dirs;
-
 use config::{Config, File};
-
+use dirs;
 use rustls::ClientConfig;
-
 use std::{fs, io::BufReader};
-
 
 #[derive(Clone)]
 pub struct Configuration {
