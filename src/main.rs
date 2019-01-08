@@ -1,4 +1,6 @@
 #![feature(panic_info_message)]
+#![feature(nll)]
+#![feature(await_macro, async_await, futures_api)]
 
 #[macro_use]
 extern crate bitflags;
@@ -8,22 +10,23 @@ extern crate influx_db_client;
 extern crate log;
 
 mod config;
+mod panic;
 mod parser;
+mod rabbit;
+mod service;
 mod tsdb {
     pub mod push;
 }
-mod rabbit;
-mod service;
 
-use crate::config::{client_config_with_root_ca, config};
+use crate::config::config;
 use crate::parser::{parser, CHTHeader};
-use crate::rabbit::{connect_stream, open_tcp_stream};
+use crate::rabbit::connect_to_rabbit_tls;
 use crate::service::index;
 use crate::tsdb::push::push;
+use crate::panic::set_panic_hook;
 
 use actix::{Actor, Handler, Message, SyncArbiter, SyncContext};
 use actix_web::{http, middleware::cors::Cors, server, App};
-use amq_protocol::uri::{AMQPQueryString, AMQPUserInfo};
 use failure::Error;
 use futures::{future, stream::Stream, Future};
 use lapin_futures::{
@@ -35,8 +38,6 @@ use rustls::{
     internal::pemfile::{certs, rsa_private_keys},
     NoClientAuth, ServerConfig,
 };
-use std::panic;
-use tls_api::TlsConnectorBuilder;
 
 impl Message for CHTHeader {
     type Result = ();
@@ -64,18 +65,6 @@ impl Handler<CHTHeader> for Summator {
     }
 }
 
-fn set_panic_hook() {
-    panic::set_hook(Box::new(|panic_info| {
-        if let Some(message) = panic_info.message() {
-            error!("panic: {}", message);
-        } else if let Some(payload) = panic_info.payload().downcast_ref::<&'static str>() {
-            error!("panic: {}", payload);
-        } else {
-            error!("panic");
-        }
-    }));
-}
-
 fn load_ssl() -> ServerConfig {
     use std::io::BufReader;
 
@@ -99,32 +88,8 @@ fn main() {
 
     let sys = actix::System::new("agent-rs");
     let configuration = config();
-    let vhost = configuration.vhost.clone();
-    let userinfo = AMQPUserInfo {
-        username: configuration.username.clone(),
-        password: configuration.password.clone(),
-    };
-    let query = AMQPQueryString {
-        frame_max: None,
-        heartbeat: Some(20),
-    };
 
-    let fut = open_tcp_stream(&configuration.host, configuration.port)
-        .join({
-            let tls_connector_builder = tls_api_rustls::TlsConnectorBuilder(
-                client_config_with_root_ca(&configuration.cafile),
-            );
-            let tls_connector = tls_connector_builder.build().map_err(Error::from);
-            futures::future::result(tls_connector)
-        })
-        .and_then(move |(stream, connector)| {
-            tokio_tls_api::connect_async(&connector, &configuration.host, stream)
-                .map_err(Error::from)
-                .map(Box::new)
-        })
-        .and_then(move |stream| {
-            connect_stream(stream, userinfo, vhost, &query, |_| ()).map_err(Error::from)
-        })
+    let fut = connect_to_rabbit_tls(&configuration, |_| ())
         .and_then(|(client, _)| {
             client
                 .create_confirm_channel(ConfirmSelectOptions::default())
