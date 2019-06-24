@@ -1,7 +1,7 @@
-use actix_web::{error::ErrorInternalServerError, HttpRequest, Json, Result};
+use actix_web::{error::ErrorInternalServerError, HttpRequest, web::Json, Result};
 use influx_db_client::{Client, Series};
 
-pub fn index(_req: &HttpRequest) -> Result<Json<Option<Vec<Series>>>> {
+pub fn index(_req: HttpRequest) -> Result<Json<Option<Vec<Series>>>> {
     let mut client = Client::default().set_authentication("root", "root");
     client.switch_database("agent-rs");
     match client.query("select * from StatSta", None) {

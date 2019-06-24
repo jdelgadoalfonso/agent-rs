@@ -2,10 +2,7 @@ use crate::tsdb::push::Influx;
 use chrono::NaiveDateTime;
 use influx_db_client::{Point, Value};
 use influxdb_derive::InfluxDB;
-use nom::{
-    be_i64, be_i8, be_u16, be_u32, be_u8, call, cond, count, do_parse, error_position, take,
-    IResult,
-};
+use nom::{be_i64, be_i8, be_u16, be_u32, be_u8, call, cond, count, do_parse, take, IResult};
 use std::fmt;
 
 #[derive(Debug, PartialEq, Eq)]
