@@ -17,7 +17,6 @@ path = "src/main.rs"
 actix = "0.8.3"
 actix-cors = "0.1.0"
 actix-web = { version = "1.0.2", features = ["rust-tls"] }
-amq-protocol = { version = "2.0.2", features = ["rustls"] }
 bitflags = "1.1.0"
 bytes = "0.4.12"
 chrono = "0.4.6"
@@ -27,7 +26,7 @@ env_logger = "0.6.1"
 failure = "0.1.5"
 futures = "0.1.27"
 influx_db_client = "0.3.6"
-lapin-futures = "0.23.0"
+lapin-futures = { version = "0.23.0", features = ["rustls"] }
 log = "0.4.6"
 machine = { git = "https://github.com/jdelgadoalfonso/machine.git", branch = "master" }
 nom = "4.2.3"
@@ -45,7 +44,6 @@ trust-dns-resolver = "0.11.1"
 
 [patch.crates-io]
 influx_db_client = { git = "https://github.com/driftluo/InfluxDBClient-rs" }
-amq-protocol = { path = "../amq-protocol/protocol", default-features = false, features = [ "rustls" ] }
 
 [profile.dev]
 opt-level        = 0
